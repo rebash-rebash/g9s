@@ -17,10 +17,7 @@ var (
 	accentStyle   = lipgloss.NewStyle().Bold(true).Foreground(colorAccent)
 	mutedStyle    = lipgloss.NewStyle().Foreground(colorMuted)
 
-	panelStyle = lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorBorder).
-		Padding(0, 1)
+	panelStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorBorder).Padding(0, 1)
 
 	statusOKStyle = lipgloss.NewStyle().Bold(true).Foreground(colorGreen)
 	statusWarnStyle = lipgloss.NewStyle().Bold(true).Foreground(colorYellow)
@@ -29,12 +26,9 @@ var (
 
 func statusStyle(status string) lipgloss.Style {
 	switch status {
-	case "RUNNING", "ATTACHED", "ACTIVE":
-		return statusOKStyle
-	case "TERMINATED", "UNATTACHED", "IDLE":
-		return statusBadStyle
-	default:
-		return statusWarnStyle
+	case "RUNNING", "ATTACHED", "ACTIVE": return statusOKStyle
+	case "TERMINATED", "UNATTACHED", "IDLE": return statusBadStyle
+	default: return statusWarnStyle
 	}
 }
 
@@ -42,17 +36,15 @@ func renderTopBar(project, page string) string {
 	brand := lipgloss.NewStyle().Bold(true).Foreground(colorAccent).Render("G9S")
 	separator := mutedStyle.Render("/")
 	pageText := appTitleStyle.Render(page)
+	if project == "" {
+		return lipgloss.JoinHorizontal(lipgloss.Center, brand, " ", separator, " ", pageText)
+	}
 	projectText := projectStyle.Render("project: " + project)
 	return lipgloss.JoinHorizontal(lipgloss.Center, brand, " ", separator, " ", pageText, "  ", projectText)
 }
 
-func renderFooter(text string) string {
-	return mutedStyle.Render(text)
-}
+func renderFooter(text string) string { return mutedStyle.Render(text) }
 
 func renderMetric(label, value string, valueStyle lipgloss.Style) string {
-	return lipgloss.JoinVertical(lipgloss.Left,
-		mutedStyle.Render(label),
-		valueStyle.Render(value),
-	)
+	return lipgloss.JoinVertical(lipgloss.Left, mutedStyle.Render(label), valueStyle.Render(value))
 }
