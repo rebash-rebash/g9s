@@ -53,6 +53,11 @@ func (s *MonitoringService) GetIOStats(ctx context.Context, instanceID string) (
 	}, nil
 }
 
+type ratePoint struct {
+	value float64
+	time  time.Time
+}
+
 type rateStats struct {
 	current *float64
 	average *float64
@@ -76,13 +81,13 @@ func (s *MonitoringService) getRateStats(ctx context.Context, instanceID, metric
 		},
 		View: monitoringpb.ListTimeSeriesRequest_FULL,
 		Aggregation: &monitoringpb.Aggregation{
-			AlignmentPeriod:  durationpb.New(5 * time.Minute),
-			PerSeriesAligner: monitoringpb.Aggregation_ALIGN_RATE,
+			AlignmentPeriod:   durationpb.New(5 * time.Minute),
+			PerSeriesAligner:  monitoringpb.Aggregation_ALIGN_RATE,
 			CrossSeriesReducer: monitoringpb.Aggregation_REDUCE_SUM,
 		},
 	})
 
-	var values []float64
+	var points []ratePoint
 	for {
 		ts, err := it.Next()
 		if err == iterator.Done {
@@ -96,22 +101,32 @@ func (s *MonitoringService) getRateStats(ctx context.Context, instanceID, metric
 			if value == 0 {
 				value = float64(point.GetValue().GetInt64Value())
 			}
-			values = append(values, value)
+			points = append(points, ratePoint{
+				value: value,
+				time:  point.GetInterval().GetEndTime().AsTime(),
+			})
 		}
 	}
 
-	if len(values) == 0 {
+	if len(points) == 0 {
 		return rateStats{}, nil
 	}
 
-	sort.Float64s(values)
 	var sum float64
-	for _, value := range values {
-		sum += value
+	latest := points[0]
+	values := make([]float64, 0, len(points))
+	for _, point := range points {
+		values = append(values, point.value)
+		sum += point.value
+		if point.time.After(latest.time) {
+			latest = point
+		}
 	}
+
+	sort.Float64s(values)
 	average := sum / float64(len(values))
 	p95 := values[int(float64(len(values)-1)*0.95)]
-	current := values[len(values)-1]
+	current := latest.value
 
 	return rateStats{current: &current, average: &average, p95: &p95}, nil
 }
