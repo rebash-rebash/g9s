@@ -11,9 +11,6 @@ import (
 
 const hoursPerMonth = 730.0
 
-// VMEstimate is an estimate only. It intentionally excludes discounts,
-// sustained-use/committed-use discounts, guest licenses, disks, and network
-// egress until those prices are sourced separately.
 type VMEstimate struct {
 	MachineType string
 	VCPU        int
@@ -22,31 +19,41 @@ type VMEstimate struct {
 	DailyUSD    float64
 	MonthlyUSD  float64
 	Source      string
+	Available   bool
 }
 
-// Catalog contains baseline on-demand Compute Engine rates in USD/hour.
-// Keep this small and explicit until G9S integrates Cloud Billing Catalog API.
 type Catalog struct {
-	VCPUHourUSD   float64
+	VCPUHourUSD     float64
 	MemoryGBHourUSD float64
-	Source        string
+	Source          string
 }
 
-// NewUSCentral1Catalog returns the baseline catalog used by the first cost
-// estimator. Rates are deliberately injected so the estimator can later use
-// region-specific or live Billing Catalog prices without changing its API.
 func NewUSCentral1Catalog() Catalog {
 	return Catalog{
-		// Baseline N1 US pricing; replace with live catalog data before treating
-		// the estimate as an invoice-grade number.
 		VCPUHourUSD:     0.031611,
 		MemoryGBHourUSD: 0.004237,
-		Source:          "baseline on-demand catalog; not billing data",
+		Source:          "baseline N1 on-demand estimate; not billing data",
 	}
 }
 
 func (c Catalog) EstimateVM(vm model.VM) VMEstimate {
-	vCPU, memoryGB := parseMachineType(vm.MachineType)
+	vCPU, memoryGB, supported := parseMachineType(vm.MachineType)
+	if !supported {
+		return VMEstimate{MachineType: vm.MachineType, VCPU: vCPU, MemoryGB: memoryGB, Source: c.Source}
+	}
+
+	// Stopped/terminated VMs do not consume vCPU/memory. Persistent disks and
+	// retained IPs are separate cost components and will be added later.
+	if vm.Status != "RUNNING" {
+		return VMEstimate{
+			MachineType: vm.MachineType,
+			VCPU:        vCPU,
+			MemoryGB:    memoryGB,
+			Source:      c.Source,
+			Available:   true,
+		}
+	}
+
 	hourly := float64(vCPU)*c.VCPUHourUSD + memoryGB*c.MemoryGBHourUSD
 	return VMEstimate{
 		MachineType: vm.MachineType,
@@ -56,43 +63,44 @@ func (c Catalog) EstimateVM(vm model.VM) VMEstimate {
 		DailyUSD:    hourly * 24,
 		MonthlyUSD:  hourly * hoursPerMonth,
 		Source:      c.Source,
+		Available:   true,
 	}
 }
 
-var machinePattern = regexp.MustCompile(`^(?:n1|e2|n2|n2d|t2d|c2|c2d|c3|c3d|m1|m2|m3|m4|t2a|a2|g2|h3|h4)-(.+)$`)
+var n1MachinePattern = regexp.MustCompile(`^n1-(?:standard|highmem|highcpu)-([0-9]+)$`)
 
-func parseMachineType(machineType string) (int, float64) {
+func parseMachineType(machineType string) (int, float64, bool) {
 	machineType = strings.TrimSpace(machineType)
-	if machineType == "" {
-		return 0, 0
+	match := n1MachinePattern.FindStringSubmatch(machineType)
+	if len(match) != 2 {
+		return 0, 0, false
 	}
-	parts := strings.Split(machineType, "-")
-	if len(parts) < 2 {
-		return 0, 0
-	}
-	shape := parts[len(parts)-1]
-	if strings.Contains(shape, "custom") {
-		return 0, 0
-	}
-	vCPU, err := strconv.Atoi(shape)
+	vCPU, err := strconv.Atoi(match[1])
 	if err != nil {
-		return 0, 0
+		return 0, 0, false
 	}
 
-	// N1 predefined memory ratios are the initial supported family. Other
-	// families are returned with an unknown memory value rather than guessed.
-	if strings.HasPrefix(machineType, "n1-") {
-		memoryByCPU := map[int]float64{
-			1: 3.75, 2: 7.5, 4: 15, 8: 30, 16: 60, 32: 120, 64: 240, 96: 360,
-		}
-		return vCPU, memoryByCPU[vCPU]
+	var memoryByCPU map[int]float64
+	switch {
+	case strings.HasPrefix(machineType, "n1-standard-"):
+		memoryByCPU = map[int]float64{1: 3.75, 2: 7.5, 4: 15, 8: 30, 16: 60, 32: 120, 64: 240, 96: 360}
+	case strings.HasPrefix(machineType, "n1-highmem-"):
+		memoryByCPU = map[int]float64{2: 13, 4: 26, 8: 52, 16: 104, 32: 208, 64: 416, 96: 624}
+	case strings.HasPrefix(machineType, "n1-highcpu-"):
+		memoryByCPU = map[int]float64{2: 1.8, 4: 3.6, 8: 7.2, 16: 14.4, 32: 28.8}
+	default:
+		return 0, 0, false
 	}
-	return vCPU, 0
+	memoryGB, ok := memoryByCPU[vCPU]
+	return vCPU, memoryGB, ok
 }
 
 func FormatEstimate(e VMEstimate) string {
+	if !e.Available {
+		return "Pricing unavailable for this machine type"
+	}
 	if e.HourlyUSD == 0 {
-		return "Pricing unavailable"
+		return "$0 compute (VM not running)"
 	}
 	return fmt.Sprintf("$%.4f/hr  $%.2f/day  $%.2f/month", e.HourlyUSD, e.DailyUSD, e.MonthlyUSD)
 }
