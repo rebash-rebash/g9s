@@ -97,11 +97,12 @@ func (m computeModel) Update(msg tea.Msg) (computeModel, tea.Cmd) {
 
 func (m computeModel) loadMetrics(instanceID string) tea.Cmd {
 	return func() tea.Msg {
-		cpu, cpuErr := m.monitoring.GetCPUUtilization(context.Background(), instanceID)
+		ctx := context.Background()
+		cpu, cpuErr := m.monitoring.GetCPUUtilization(ctx, instanceID)
 		if cpuErr != nil {
 			return vmMetricsMsg{utilization: cpu, err: cpuErr}
 		}
-		ioStats, ioErr := m.monitoring.GetIOStats(context.Background(), instanceID)
+		ioStats, ioErr := m.monitoring.GetIOStats(ctx, instanceID)
 		return vmMetricsMsg{utilization: cpu, ioStats: ioStats, err: ioErr}
 	}
 }
@@ -165,8 +166,8 @@ func renderVMDetails(vm model.VM, monitoringAvailable, metricsLoading bool, util
 			line("Assessment", assessCPU(utilization)),
 			"",
 			lipgloss.NewStyle().Bold(true).Render("INTELLIGENCE"),
-			line("Usage", analyzer.VMUsageStatus(vm, utilization)),
-			line("Recommendation", analyzer.Recommendation(vm, utilization)),
+			line("Usage", analyzer.VMUsageStatus(vm, utilization, ioStats)),
+			line("Recommendation", analyzer.Recommendation(vm, utilization, ioStats)),
 		)
 	}
 
