@@ -90,7 +90,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.list.SetSize(msg.Width, msg.Height-8)
+		m.list.SetSize(msg.Width-4, msg.Height-10)
 	}
 	var cmd tea.Cmd; m.list, cmd = m.list.Update(msg); return m, cmd
 }
@@ -117,23 +117,30 @@ func (m Model) loadCost() tea.Cmd {
 
 func (m Model) View() string {
 	if m.quitting { return "" }
+
+	var content string
 	switch m.screen {
-	case computeScreen: return m.compute.View()
-	case disksScreen: return m.disks.View()
-	case costScreen: return m.cost.View()
+	case computeScreen:
+		content = m.compute.View()
+	case disksScreen:
+		content = m.disks.View()
+	case costScreen:
+		content = m.cost.View()
+	default:
+		header := renderTopBar(m.project, "GCP Resource Explorer")
+		contextLine := mutedStyle.Render("Connected  •  GCP  •  project: ") + accentStyle.Render(m.project)
+		footer := renderFooter("↑↓ navigate  •  / search  •  enter open  •  q quit")
+		content = lipgloss.JoinVertical(lipgloss.Left,
+			header,
+			contextLine,
+			"",
+			m.list.View(),
+			"",
+			footer,
+		)
 	}
 
-	header := renderTopBar(m.project, "GCP Resource Explorer")
-	contextLine := mutedStyle.Render("Connected  •  GCP  •  project: ") + accentStyle.Render(m.project)
-	footer := renderFooter("↑↓ navigate  •  / search  •  enter open  •  q quit")
-	return lipgloss.JoinVertical(lipgloss.Left,
-		header,
-		contextLine,
-		"",
-		m.list.View(),
-		"",
-		footer,
-	)
+	return renderFrame(m.width, m.height, content)
 }
 
 type costModel struct {
