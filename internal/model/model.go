@@ -8,17 +8,17 @@ type Project struct {
 }
 
 type VM struct {
-	Name          string
-	InstanceID    string
-	Zone          string
-	MachineType   string
-	Status        string
-	InternalIP    string
-	ExternalIP    string
-	CreationTime  string
-	BootDisk      string
-	DiskCount     int
-	NetworkCount  int
+	Name         string
+	InstanceID   string
+	Zone         string
+	MachineType  string
+	Status       string
+	InternalIP   string
+	ExternalIP   string
+	CreationTime string
+	BootDisk     string
+	DiskCount    int
+	NetworkCount int
 }
 
 type Cluster struct {
@@ -52,6 +52,23 @@ type Utilization struct {
 	Average *float64
 	P95     *float64
 	Unit    string
+}
+
+// IOStats contains 24-hour average/current throughput for a VM.
+// Network and disk values are bytes per second.
+type IOStats struct {
+	NetworkInCurrent  *float64
+	NetworkInAverage  *float64
+	NetworkInP95      *float64
+	NetworkOutCurrent *float64
+	NetworkOutAverage *float64
+	NetworkOutP95     *float64
+	DiskReadCurrent   *float64
+	DiskReadAverage   *float64
+	DiskReadP95       *float64
+	DiskWriteCurrent  *float64
+	DiskWriteAverage  *float64
+	DiskWriteP95      *float64
 }
 
 type Finding struct {
