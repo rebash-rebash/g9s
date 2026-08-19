@@ -18,10 +18,13 @@ func (i vmItem) Description() string {
 func (i vmItem) FilterValue() string { return i.vm.Name }
 
 type computeModel struct {
-	list    list.Model
-	loading bool
-	err     error
-	detail  *model.VM
+	list        list.Model
+	loading     bool
+	err         error
+	detail      *model.VM
+	utilization model.Utilization
+	utilLoading bool
+	utilErr     error
 }
 
 func newComputeModel(width, height int) computeModel {
@@ -32,8 +35,18 @@ func newComputeModel(width, height int) computeModel {
 
 func (m computeModel) Update(msg tea.Msg) (computeModel, tea.Cmd) {
 	if m.detail != nil {
-		if key, ok := msg.(tea.KeyMsg); ok && key.String() == "esc" {
-			m.detail = nil
+		switch key := msg.(type) {
+		case tea.KeyMsg:
+			if key.String() == "esc" {
+				m.detail = nil
+				m.utilization = model.Utilization{}
+				m.utilLoading = false
+				m.utilErr = nil
+			}
+		case cpuUtilizationMsg:
+			m.utilLoading = false
+			m.utilization = msg.utilization
+			m.utilErr = msg.err
 		}
 		return m, nil
 	}
@@ -52,6 +65,9 @@ func (m computeModel) Update(msg tea.Msg) (computeModel, tea.Cmd) {
 			items = append(items, vmItem{vm: vm})
 		}
 		m.list.SetItems(items)
+	case TeaCPUUtilizationMsg:
+		// Compatibility alias for future message routing.
+		m.utilLoading = false
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "esc":
@@ -60,6 +76,9 @@ func (m computeModel) Update(msg tea.Msg) (computeModel, tea.Cmd) {
 			if item, ok := m.list.SelectedItem().(vmItem); ok {
 				vm := item.vm
 				m.detail = &vm
+				m.utilization = model.Utilization{}
+				m.utilLoading = vm.Status == "RUNNING"
+				m.utilErr = nil
 			}
 		}
 	}
@@ -70,7 +89,7 @@ func (m computeModel) Update(msg tea.Msg) (computeModel, tea.Cmd) {
 
 func (m computeModel) View() string {
 	if m.detail != nil {
-		return renderVMDetails(*m.detail)
+		return renderVMDetails(*m.detail, m.utilLoading, m.utilization, m.utilErr)
 	}
 	if m.loading {
 		return "Loading Compute Engine instances..."
@@ -81,7 +100,7 @@ func (m computeModel) View() string {
 	return m.list.View() + "\n" + lipgloss.NewStyle().Faint(true).Render("↑↓ navigate  / search  enter details  esc back") + "\n"
 }
 
-func renderVMDetails(vm model.VM) string {
+func renderVMDetails(vm model.VM, utilLoading bool, utilization model.Utilization, utilErr error) string {
 	title := lipgloss.NewStyle().Bold(true).Render("Compute Engine — VM Details")
 	label := lipgloss.NewStyle().Bold(true)
 	line := func(name, value string) string {
@@ -105,14 +124,65 @@ func renderVMDetails(vm model.VM) string {
 		line("Networks", fmt.Sprintf("%d", vm.NetworkCount)),
 		line("Created", vm.CreationTime),
 		"",
-		lipgloss.NewStyle().Faint(true).Render("esc back"),
+		lipgloss.NewStyle().Bold(true).Render("CPU UTILIZATION (24h)"),
 	}
+
+	if vm.Status != "RUNNING" {
+		body = append(body, "Not running — CPU metrics are not evaluated.")
+	} else if utilLoading {
+		body = append(body, "Loading Cloud Monitoring metrics...")
+	} else if utilErr != nil {
+		body = append(body, lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("Monitoring error: "+utilErr.Error()))
+	} else if utilization.Average == nil {
+		body = append(body, "No CPU metric data available.")
+	} else {
+		body = append(body,
+			line("Current", formatRatio(utilization.Current)),
+			line("Average", formatRatio(utilization.Average)),
+			line("P95", formatRatio(utilization.P95)),
+			"",
+			line("Assessment", assessCPU(utilization)),
+		)
+	}
+
+	body = append(body, "", lipgloss.NewStyle().Faint(true).Render("esc back"))
 	return lipgloss.JoinVertical(lipgloss.Left, body...)
+}
+
+func formatRatio(value *float64) string {
+	if value == nil {
+		return "N/A"
+	}
+	return fmt.Sprintf("%.1f%%", *value*100)
+}
+
+func assessCPU(util model.Utilization) string {
+	if util.P95 == nil {
+		return "UNKNOWN"
+	}
+	switch {
+	case *util.P95 < 0.10:
+		return "VERY LOW"
+	case *util.P95 < 0.30:
+		return "LOW"
+	case *util.P95 < 0.70:
+		return "NORMAL"
+	default:
+		return "HIGH"
+	}
 }
 
 type vmListMsg struct {
 	vms []model.VM
 	err error
 }
+
+type cpuUtilizationMsg struct {
+	utilization model.Utilization
+	err         error
+}
+
+// TeaCPUUtilizationMsg is retained as a named message type for compatibility with future UI routing.
+type TeaCPUUtilizationMsg struct{}
 
 type backMsg struct{}
