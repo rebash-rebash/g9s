@@ -33,6 +33,8 @@ type Model struct {
 	computeSvc *gcp.ComputeService
 	screen     screen
 	quitting   bool
+	width      int
+	height     int
 }
 
 func New(project string, computeSvc *gcp.ComputeService) Model {
@@ -48,7 +50,12 @@ func New(project string, computeSvc *gcp.ComputeService) Model {
 	l := list.New(items, delegate, 0, 0)
 	l.Title = "G9S — GCP Resource & Cost Explorer"
 
-	return Model{project: project, list: l, compute: newComputeModel(), computeSvc: computeSvc}
+	return Model{
+		project:    project,
+		list:       l,
+		compute:    newComputeModel(0, 0),
+		computeSvc: computeSvc,
+	}
 }
 
 func (m Model) Init() tea.Cmd { return nil }
@@ -73,11 +80,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "enter" {
 			if item, ok := m.list.SelectedItem().(resourceItem); ok && item.name == "Compute Engine" {
 				m.screen = computeScreen
-				m.compute = newComputeModel()
+				m.compute = newComputeModel(m.width, m.height-4)
 				return m, m.loadVMs()
 			}
 		}
 	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
 		m.list.SetSize(msg.Width, msg.Height-4)
 	}
 
