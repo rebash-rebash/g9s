@@ -9,6 +9,7 @@ type Project struct {
 
 type VM struct {
 	Name          string
+	InstanceID    string
 	Zone          string
 	MachineType   string
 	Status        string
@@ -28,10 +29,10 @@ type Cluster struct {
 }
 
 type Disk struct {
-	Name      string
-	Zone      string
-	SizeGB    int64
-	Attached  bool
+	Name     string
+	Zone     string
+	SizeGB   int64
+	Attached bool
 }
 
 type Cost struct {
@@ -44,6 +45,13 @@ type Metric struct {
 	Value      float64
 	Unit       string
 	ObservedAt string
+}
+
+type Utilization struct {
+	Current *float64
+	Average *float64
+	P95     *float64
+	Unit    string
 }
 
 type Finding struct {
