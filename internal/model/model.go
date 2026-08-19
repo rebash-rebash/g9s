@@ -8,10 +8,16 @@ type Project struct {
 }
 
 type VM struct {
-	Name        string
-	Zone        string
-	MachineType string
-	Status      string
+	Name          string
+	Zone          string
+	MachineType   string
+	Status        string
+	InternalIP    string
+	ExternalIP    string
+	CreationTime  string
+	BootDisk      string
+	DiskCount     int
+	NetworkCount  int
 }
 
 type Cluster struct {
@@ -41,11 +47,11 @@ type Metric struct {
 }
 
 type Finding struct {
-	ResourceID    string
-	ResourceType  string
-	Severity      string
-	Reason        string
-	MonthlyCost   float64
-	PotentialSave float64
+	ResourceID     string
+	ResourceType   string
+	Severity       string
+	Reason         string
+	MonthlyCost    float64
+	PotentialSave  float64
 	Recommendation string
 }
