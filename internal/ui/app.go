@@ -27,17 +27,18 @@ const (
 )
 
 type Model struct {
-	project    string
-	list       list.Model
-	compute    computeModel
-	computeSvc *gcp.ComputeService
-	screen     screen
-	quitting   bool
-	width      int
-	height     int
+	project      string
+	list         list.Model
+	compute      computeModel
+	computeSvc   *gcp.ComputeService
+	monitoringSvc *gcp.MonitoringService
+	screen       screen
+	quitting     bool
+	width        int
+	height       int
 }
 
-func New(project string, computeSvc *gcp.ComputeService) Model {
+func New(project string, computeSvc *gcp.ComputeService, monitoringSvc *gcp.MonitoringService) Model {
 	items := []list.Item{
 		resourceItem{"Compute Engine", "Explore virtual machines"},
 		resourceItem{"GKE", "Explore Kubernetes clusters"},
@@ -51,10 +52,11 @@ func New(project string, computeSvc *gcp.ComputeService) Model {
 	l.Title = "G9S — GCP Resource & Cost Explorer"
 
 	return Model{
-		project:    project,
-		list:       l,
-		compute:    newComputeModel(0, 0),
-		computeSvc: computeSvc,
+		project:       project,
+		list:          l,
+		compute:       newComputeModel(0, 0, monitoringSvc),
+		computeSvc:    computeSvc,
+		monitoringSvc: monitoringSvc,
 	}
 }
 
@@ -80,7 +82,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "enter" {
 			if item, ok := m.list.SelectedItem().(resourceItem); ok && item.name == "Compute Engine" {
 				m.screen = computeScreen
-				m.compute = newComputeModel(m.width, m.height-4)
+				m.compute = newComputeModel(m.width, m.height-4, m.monitoringSvc)
 				return m, m.loadVMs()
 			}
 		}
