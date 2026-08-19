@@ -54,8 +54,11 @@ func (s *ComputeService) ListVMs(ctx context.Context) ([]model.VM, error) {
 
 func normalizeVM(instance *computepb.Instance) model.VM {
 	vm := model.VM{
-		Name:   instance.GetName(),
-		Status: instance.GetStatus(),
+		Name:         instance.GetName(),
+		Status:       instance.GetStatus(),
+		CreationTime: instance.GetCreationTimestamp(),
+		DiskCount:    len(instance.GetDisks()),
+		NetworkCount: len(instance.GetNetworkInterfaces()),
 	}
 	if instance.GetZone() != "" {
 		parts := strings.Split(instance.GetZone(), "/")
@@ -64,6 +67,27 @@ func normalizeVM(instance *computepb.Instance) model.VM {
 	if instance.GetMachineType() != "" {
 		parts := strings.Split(instance.GetMachineType(), "/")
 		vm.MachineType = parts[len(parts)-1]
+	}
+	for _, nic := range instance.GetNetworkInterfaces() {
+		if vm.InternalIP == "" {
+			vm.InternalIP = nic.GetNetworkIP()
+		}
+		if vm.ExternalIP == "" {
+			for _, access := range nic.GetAccessConfigs() {
+				if access.GetNatIP() != "" {
+					vm.ExternalIP = access.GetNatIP()
+					break
+				}
+			}
+		}
+	}
+	for _, disk := range instance.GetDisks() {
+		if disk.GetBoot() {
+			vm.BootDisk = disk.GetSource()
+			parts := strings.Split(vm.BootDisk, "/")
+			vm.BootDisk = parts[len(parts)-1]
+			break
+		}
 	}
 	return vm
 }
