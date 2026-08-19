@@ -48,8 +48,8 @@ func (m computeModel) Update(msg tea.Msg) (computeModel, tea.Cmd) {
 			}
 		case cpuUtilizationMsg:
 			m.utilLoading = false
-			m.utilization = msg.utilization
-			m.utilErr = msg.err
+			m.utilization = key.utilization
+			m.utilErr = key.err
 		}
 		return m, nil
 	}
