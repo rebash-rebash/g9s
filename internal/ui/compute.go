@@ -21,14 +21,15 @@ func (i vmItem) Description() string {
 func (i vmItem) FilterValue() string { return i.vm.Name }
 
 type computeModel struct {
-	list        list.Model
-	loading     bool
-	err         error
-	detail      *model.VM
-	monitoring  *gcp.MonitoringService
-	utilization model.Utilization
-	utilLoading bool
-	utilErr     error
+	list           list.Model
+	loading        bool
+	err            error
+	detail         *model.VM
+	monitoring     *gcp.MonitoringService
+	utilization    model.Utilization
+	ioStats        model.IOStats
+	metricsLoading bool
+	metricsErr     error
 }
 
 func newComputeModel(width, height int, monitoring *gcp.MonitoringService) computeModel {
@@ -44,13 +45,15 @@ func (m computeModel) Update(msg tea.Msg) (computeModel, tea.Cmd) {
 			if key.String() == "esc" {
 				m.detail = nil
 				m.utilization = model.Utilization{}
-				m.utilLoading = false
-				m.utilErr = nil
+				m.ioStats = model.IOStats{}
+				m.metricsLoading = false
+				m.metricsErr = nil
 			}
-		case cpuUtilizationMsg:
-			m.utilLoading = false
+		case vmMetricsMsg:
+			m.metricsLoading = false
 			m.utilization = key.utilization
-			m.utilErr = key.err
+			m.ioStats = key.ioStats
+			m.metricsErr = key.err
 		}
 		return m, nil
 	}
@@ -78,10 +81,11 @@ func (m computeModel) Update(msg tea.Msg) (computeModel, tea.Cmd) {
 				vm := item.vm
 				m.detail = &vm
 				m.utilization = model.Utilization{}
-				m.utilErr = nil
-				m.utilLoading = vm.Status == "RUNNING" && m.monitoring != nil
-				if m.utilLoading {
-					return m, m.loadCPU(vm.InstanceID)
+				m.ioStats = model.IOStats{}
+				m.metricsErr = nil
+				m.metricsLoading = vm.Status == "RUNNING" && m.monitoring != nil
+				if m.metricsLoading {
+					return m, m.loadMetrics(vm.InstanceID)
 				}
 			}
 		}
@@ -91,16 +95,20 @@ func (m computeModel) Update(msg tea.Msg) (computeModel, tea.Cmd) {
 	return m, cmd
 }
 
-func (m computeModel) loadCPU(instanceID string) tea.Cmd {
+func (m computeModel) loadMetrics(instanceID string) tea.Cmd {
 	return func() tea.Msg {
-		utilization, err := m.monitoring.GetCPUUtilization(context.Background(), instanceID)
-		return cpuUtilizationMsg{utilization: utilization, err: err}
+		cpu, cpuErr := m.monitoring.GetCPUUtilization(context.Background(), instanceID)
+		if cpuErr != nil {
+			return vmMetricsMsg{utilization: cpu, err: cpuErr}
+		}
+		ioStats, ioErr := m.monitoring.GetIOStats(context.Background(), instanceID)
+		return vmMetricsMsg{utilization: cpu, ioStats: ioStats, err: ioErr}
 	}
 }
 
 func (m computeModel) View() string {
 	if m.detail != nil {
-		return renderVMDetails(*m.detail, m.monitoring != nil, m.utilLoading, m.utilization, m.utilErr)
+		return renderVMDetails(*m.detail, m.monitoring != nil, m.metricsLoading, m.utilization, m.ioStats, m.metricsErr)
 	}
 	if m.loading {
 		return "Loading Compute Engine instances..."
@@ -111,14 +119,14 @@ func (m computeModel) View() string {
 	return m.list.View() + "\n" + lipgloss.NewStyle().Faint(true).Render("↑↓ navigate  / search  enter details  esc back") + "\n"
 }
 
-func renderVMDetails(vm model.VM, monitoringAvailable, utilLoading bool, utilization model.Utilization, utilErr error) string {
+func renderVMDetails(vm model.VM, monitoringAvailable, metricsLoading bool, utilization model.Utilization, ioStats model.IOStats, metricsErr error) string {
 	title := lipgloss.NewStyle().Bold(true).Render("Compute Engine — VM Details")
 	label := lipgloss.NewStyle().Bold(true)
 	line := func(name, value string) string {
 		if value == "" {
 			value = "-"
 		}
-		return fmt.Sprintf("%-16s %s", label.Render(name), value)
+		return fmt.Sprintf("%-18s %s", label.Render(name), value)
 	}
 
 	body := []string{
@@ -139,13 +147,13 @@ func renderVMDetails(vm model.VM, monitoringAvailable, utilLoading bool, utiliza
 	}
 
 	if vm.Status != "RUNNING" {
-		body = append(body, "Not running — CPU metrics are not evaluated.")
+		body = append(body, "Not running — usage metrics are not evaluated.")
 	} else if !monitoringAvailable {
 		body = append(body, "Cloud Monitoring is unavailable.")
-	} else if utilLoading {
+	} else if metricsLoading {
 		body = append(body, "Loading Cloud Monitoring metrics...")
-	} else if utilErr != nil {
-		body = append(body, lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("Monitoring error: "+utilErr.Error()))
+	} else if metricsErr != nil {
+		body = append(body, lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("Monitoring error: "+metricsErr.Error()))
 	} else if utilization.Average == nil {
 		body = append(body, "No CPU metric data available.")
 	} else {
@@ -162,6 +170,30 @@ func renderVMDetails(vm model.VM, monitoringAvailable, utilLoading bool, utiliza
 		)
 	}
 
+	body = append(body, "", lipgloss.NewStyle().Bold(true).Render("NETWORK (24h)"))
+	if vm.Status != "RUNNING" || metricsLoading || metricsErr != nil {
+		body = append(body, "No network throughput data available.")
+	} else {
+		body = append(body,
+			line("Receive avg", formatBytesPerSecond(ioStats.NetworkInAverage)),
+			line("Receive P95", formatBytesPerSecond(ioStats.NetworkInP95)),
+			line("Send avg", formatBytesPerSecond(ioStats.NetworkOutAverage)),
+			line("Send P95", formatBytesPerSecond(ioStats.NetworkOutP95)),
+		)
+	}
+
+	body = append(body, "", lipgloss.NewStyle().Bold(true).Render("DISK I/O (24h)"))
+	if vm.Status != "RUNNING" || metricsLoading || metricsErr != nil {
+		body = append(body, "No disk throughput data available.")
+	} else {
+		body = append(body,
+			line("Read avg", formatBytesPerSecond(ioStats.DiskReadAverage)),
+			line("Read P95", formatBytesPerSecond(ioStats.DiskReadP95)),
+			line("Write avg", formatBytesPerSecond(ioStats.DiskWriteAverage)),
+			line("Write P95", formatBytesPerSecond(ioStats.DiskWriteP95)),
+		)
+	}
+
 	body = append(body, "", lipgloss.NewStyle().Faint(true).Render("esc back"))
 	return lipgloss.JoinVertical(lipgloss.Left, body...)
 }
@@ -171,6 +203,23 @@ func formatRatio(value *float64) string {
 		return "N/A"
 	}
 	return fmt.Sprintf("%.1f%%", *value*100)
+}
+
+func formatBytesPerSecond(value *float64) string {
+	if value == nil {
+		return "N/A"
+	}
+	v := *value
+	switch {
+	case v >= 1024*1024*1024:
+		return fmt.Sprintf("%.2f GiB/s", v/(1024*1024*1024))
+	case v >= 1024*1024:
+		return fmt.Sprintf("%.2f MiB/s", v/(1024*1024))
+	case v >= 1024:
+		return fmt.Sprintf("%.2f KiB/s", v/1024)
+	default:
+		return fmt.Sprintf("%.0f B/s", v)
+	}
 }
 
 func assessCPU(util model.Utilization) string {
@@ -194,8 +243,9 @@ type vmListMsg struct {
 	err error
 }
 
-type cpuUtilizationMsg struct {
+type vmMetricsMsg struct {
 	utilization model.Utilization
+	ioStats     model.IOStats
 	err         error
 }
 
