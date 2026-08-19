@@ -34,6 +34,7 @@ type Disk struct {
 	SizeGB   int64
 	Type     string
 	Attached bool
+	Users    []string
 }
 
 type Cost struct {
