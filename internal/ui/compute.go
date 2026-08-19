@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
@@ -26,6 +27,7 @@ type computeModel struct {
 	loading        bool
 	err            error
 	detail         *model.VM
+	disks          []model.Disk
 	monitoring     *gcp.MonitoringService
 	utilization    model.Utilization
 	ioStats        model.IOStats
@@ -69,6 +71,7 @@ func (m computeModel) Update(msg tea.Msg) (computeModel, tea.Cmd) {
 			m.err = msg.err
 			break
 		}
+		m.disks = msg.disks
 		items := make([]list.Item, 0, len(msg.vms))
 		for _, vm := range msg.vms {
 			items = append(items, vmItem{vm: vm})
@@ -111,7 +114,7 @@ func (m computeModel) loadMetrics(instanceID string) tea.Cmd {
 
 func (m computeModel) View() string {
 	if m.detail != nil {
-		return renderVMDetails(*m.detail, m.monitoring != nil, m.metricsLoading, m.utilization, m.ioStats, m.metricsErr, m.catalog)
+		return renderVMDetails(*m.detail, m.disks, m.monitoring != nil, m.metricsLoading, m.utilization, m.ioStats, m.metricsErr, m.catalog)
 	}
 	if m.loading {
 		return "Loading Compute Engine instances..."
@@ -122,7 +125,7 @@ func (m computeModel) View() string {
 	return m.list.View() + "\n" + lipgloss.NewStyle().Faint(true).Render("↑↓ navigate  / search  enter details  esc back") + "\n"
 }
 
-func renderVMDetails(vm model.VM, monitoringAvailable, metricsLoading bool, utilization model.Utilization, ioStats model.IOStats, metricsErr error, catalog cost.Catalog) string {
+func renderVMDetails(vm model.VM, disks []model.Disk, monitoringAvailable, metricsLoading bool, utilization model.Utilization, ioStats model.IOStats, metricsErr error, catalog cost.Catalog) string {
 	title := lipgloss.NewStyle().Bold(true).Render("Compute Engine — VM Details")
 	label := lipgloss.NewStyle().Bold(true)
 	line := func(name, value string) string {
@@ -145,21 +148,18 @@ func renderVMDetails(vm model.VM, monitoringAvailable, metricsLoading bool, util
 		line("Attached Disks", fmt.Sprintf("%d", vm.DiskCount)),
 		line("Networks", fmt.Sprintf("%d", vm.NetworkCount)),
 		line("Created", vm.CreationTime),
-		"",
-		lipgloss.NewStyle().Bold(true).Render("ESTIMATED COMPUTE COST"),
 	}
 
-	estimate := catalog.EstimateVM(vm)
-	if estimate.HourlyUSD == 0 {
-		body = append(body, "Pricing unavailable for this machine type.")
-	} else {
-		body = append(body,
-			line("Hourly", fmt.Sprintf("$%.4f", estimate.HourlyUSD)),
-			line("Daily", fmt.Sprintf("$%.2f", estimate.DailyUSD)),
-			line("Monthly", fmt.Sprintf("$%.2f", estimate.MonthlyUSD)),
-			line("Pricing", "Baseline estimate — not billing data"),
-		)
-	}
+	computeEstimate := catalog.EstimateVM(vm)
+	diskMonthly := attachedDiskMonthly(vm, disks)
+	body = append(body,
+		"",
+		lipgloss.NewStyle().Bold(true).Render("ESTIMATED MONTHLY COST"),
+		line("Compute", formatUSD(computeEstimate.MonthlyUSD)),
+		line("Persistent Disk", formatUSD(diskMonthly)),
+		line("Total", formatUSD(computeEstimate.MonthlyUSD+diskMonthly)),
+		line("Pricing", "Baseline estimate — not billing data"),
+	)
 
 	body = append(body, "", lipgloss.NewStyle().Bold(true).Render("CPU UTILIZATION (24h)"))
 	if vm.Status != "RUNNING" {
@@ -214,49 +214,65 @@ func renderVMDetails(vm model.VM, monitoringAvailable, metricsLoading bool, util
 	return lipgloss.JoinVertical(lipgloss.Left, body...)
 }
 
-func formatRatio(value *float64) string {
-	if value == nil {
-		return "N/A"
+func attachedDiskMonthly(vm model.VM, disks []model.Disk) float64 {
+	var total float64
+	for _, d := range disks {
+		attached := strings.Contains(strings.ToLower(d.Name), strings.ToLower(vm.BootDisk)) && vm.BootDisk != ""
+		if !attached {
+			for _, user := range d.Users {
+				if strings.Contains(user, "/instances/"+vm.Name) {
+					attached = true
+					break
+				}
+			}
+		}
+		if attached {
+			e := cost.EstimateDisk(d)
+			if e.Available {
+				total += e.MonthlyUSD
+			}
+		}
 	}
+	return total
+}
+
+func formatUSD(value float64) string {
+	if value <= 0 {
+		return "$0.00"
+	}
+	return fmt.Sprintf("$%.2f", value)
+}
+
+func formatRatio(value *float64) string {
+	if value == nil { return "N/A" }
 	return fmt.Sprintf("%.1f%%", *value*100)
 }
 
 func formatBytesPerSecond(value *float64) string {
-	if value == nil {
-		return "N/A"
-	}
+	if value == nil { return "N/A" }
 	v := *value
 	switch {
-	case v >= 1024*1024*1024:
-		return fmt.Sprintf("%.2f GiB/s", v/(1024*1024*1024))
-	case v >= 1024*1024:
-		return fmt.Sprintf("%.2f MiB/s", v/(1024*1024))
-	case v >= 1024:
-		return fmt.Sprintf("%.2f KiB/s", v/1024)
-	default:
-		return fmt.Sprintf("%.0f B/s", v)
+	case v >= 1024*1024*1024: return fmt.Sprintf("%.2f GiB/s", v/(1024*1024*1024))
+	case v >= 1024*1024: return fmt.Sprintf("%.2f MiB/s", v/(1024*1024))
+	case v >= 1024: return fmt.Sprintf("%.2f KiB/s", v/1024)
+	default: return fmt.Sprintf("%.0f B/s", v)
 	}
 }
 
 func assessCPU(util model.Utilization) string {
-	if util.P95 == nil {
-		return "UNKNOWN"
-	}
+	if util.P95 == nil { return "UNKNOWN" }
 	switch {
-	case *util.P95 < 0.10:
-		return "VERY LOW"
-	case *util.P95 < 0.30:
-		return "LOW"
-	case *util.P95 < 0.70:
-		return "NORMAL"
-	default:
-		return "HIGH"
+	case *util.P95 < 0.10: return "VERY LOW"
+	case *util.P95 < 0.30: return "LOW"
+	case *util.P95 < 0.70: return "NORMAL"
+	default: return "HIGH"
 	}
 }
 
 type vmListMsg struct {
-	vms []model.VM
-	err error
+	vms   []model.VM
+	disks []model.Disk
+	err   error
 }
 
 type vmMetricsMsg struct {
