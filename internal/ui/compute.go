@@ -24,8 +24,8 @@ type computeModel struct {
 	selected *model.VM
 }
 
-func newComputeModel() computeModel {
-	l := list.New([]list.Item{}, list.NewDefaultDelegate(), 0, 0)
+func newComputeModel(width, height int) computeModel {
+	l := list.New([]list.Item{}, list.NewDefaultDelegate(), width, height)
 	l.Title = "Compute Engine — Virtual Machines"
 	return computeModel{list: l, loading: true}
 }
@@ -65,7 +65,6 @@ func (m computeModel) View() string {
 	return m.list.View() + "\n" + lipgloss.NewStyle().Faint(true).Render("↑↓ navigate  / search  enter details  esc back") + "\n"
 }
 
-// VM list messages are kept private to the UI package so API details don't leak into views.
 type vmListMsg struct {
 	vms []model.VM
 	err error
