@@ -3,7 +3,6 @@ package ui
 import (
 	"fmt"
 
-	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -19,8 +18,8 @@ func (i resourceItem) Description() string { return i.count }
 func (i resourceItem) FilterValue() string { return i.name }
 
 type Model struct {
-	project string
-	list    list.Model
+	project  string
+	list     list.Model
 	quitting bool
 }
 
@@ -36,11 +35,6 @@ func New(project string) Model {
 	delegate := list.NewDefaultDelegate()
 	l := list.New(items, delegate, 0, 0)
 	l.Title = "G9S — GCP Resource & Cost Explorer"
-	l.AdditionalFullHelpKeys = func() []key.Binding {
-		return []key.Binding{{
-			Help: key.Help{Key: "q", Desc: "quit"},
-		}}
-	}
 
 	return Model{project: project, list: l}
 }
