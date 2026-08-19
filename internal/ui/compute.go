@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/rebash-rebash/g9s/internal/analyzer"
 	"github.com/rebash-rebash/g9s/internal/gcp"
 	"github.com/rebash-rebash/g9s/internal/model"
 )
@@ -154,6 +155,10 @@ func renderVMDetails(vm model.VM, monitoringAvailable, utilLoading bool, utiliza
 			line("P95", formatRatio(utilization.P95)),
 			"",
 			line("Assessment", assessCPU(utilization)),
+			"",
+			lipgloss.NewStyle().Bold(true).Render("INTELLIGENCE"),
+			line("Usage", analyzer.VMUsageStatus(vm, utilization)),
+			line("Recommendation", analyzer.Recommendation(vm, utilization)),
 		)
 	}
 
