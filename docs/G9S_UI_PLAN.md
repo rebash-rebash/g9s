@@ -62,7 +62,7 @@ Make keyboard behavior consistent across all resources. Support resource-oriente
 - [x] Plan captured in repository
 - [x] Step 1 — application frame and responsive shell
 - [x] Step 2 — dashboard table
-- [ ] Step 3 — Compute Engine table
+- [ ] Step 3 — Compute Engine table (in progress: dense aligned rows and responsive table sizing)
 - [ ] Step 4 — VM detail layout
 - [ ] Step 5 — Persistent Disk table
 - [ ] Step 6 — Cost Intelligence table/layout
