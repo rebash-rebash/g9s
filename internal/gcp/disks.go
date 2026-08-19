@@ -54,10 +54,19 @@ func normalizeDisk(disk *computepb.Disk) model.Disk {
 		Name:     disk.GetName(),
 		SizeGB:   disk.GetSizeGb(),
 		Attached: len(disk.GetUsers()) > 0,
+		Type:     diskType(disk.GetType()),
 	}
 	if disk.GetZone() != "" {
 		parts := strings.Split(disk.GetZone(), "/")
 		d.Zone = parts[len(parts)-1]
 	}
 	return d
+}
+
+func diskType(raw string) string {
+	if raw == "" {
+		return "unknown"
+	}
+	parts := strings.Split(raw, "/")
+	return parts[len(parts)-1]
 }
