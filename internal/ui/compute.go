@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/rebash-rebash/g9s/internal/analyzer"
+	"github.com/rebash-rebash/g9s/internal/cost"
 	"github.com/rebash-rebash/g9s/internal/gcp"
 	"github.com/rebash-rebash/g9s/internal/model"
 )
@@ -30,12 +31,13 @@ type computeModel struct {
 	ioStats        model.IOStats
 	metricsLoading bool
 	metricsErr     error
+	catalog        cost.Catalog
 }
 
 func newComputeModel(width, height int, monitoring *gcp.MonitoringService) computeModel {
 	l := list.New([]list.Item{}, list.NewDefaultDelegate(), width, height)
 	l.Title = "Compute Engine — Virtual Machines"
-	return computeModel{list: l, loading: true, monitoring: monitoring}
+	return computeModel{list: l, loading: true, monitoring: monitoring, catalog: cost.NewUSCentral1Catalog()}
 }
 
 func (m computeModel) Update(msg tea.Msg) (computeModel, tea.Cmd) {
@@ -109,7 +111,7 @@ func (m computeModel) loadMetrics(instanceID string) tea.Cmd {
 
 func (m computeModel) View() string {
 	if m.detail != nil {
-		return renderVMDetails(*m.detail, m.monitoring != nil, m.metricsLoading, m.utilization, m.ioStats, m.metricsErr)
+		return renderVMDetails(*m.detail, m.monitoring != nil, m.metricsLoading, m.utilization, m.ioStats, m.metricsErr, m.catalog)
 	}
 	if m.loading {
 		return "Loading Compute Engine instances..."
@@ -120,7 +122,7 @@ func (m computeModel) View() string {
 	return m.list.View() + "\n" + lipgloss.NewStyle().Faint(true).Render("↑↓ navigate  / search  enter details  esc back") + "\n"
 }
 
-func renderVMDetails(vm model.VM, monitoringAvailable, metricsLoading bool, utilization model.Utilization, ioStats model.IOStats, metricsErr error) string {
+func renderVMDetails(vm model.VM, monitoringAvailable, metricsLoading bool, utilization model.Utilization, ioStats model.IOStats, metricsErr error, catalog cost.Catalog) string {
 	title := lipgloss.NewStyle().Bold(true).Render("Compute Engine — VM Details")
 	label := lipgloss.NewStyle().Bold(true)
 	line := func(name, value string) string {
@@ -144,9 +146,22 @@ func renderVMDetails(vm model.VM, monitoringAvailable, metricsLoading bool, util
 		line("Networks", fmt.Sprintf("%d", vm.NetworkCount)),
 		line("Created", vm.CreationTime),
 		"",
-		lipgloss.NewStyle().Bold(true).Render("CPU UTILIZATION (24h)"),
+		lipgloss.NewStyle().Bold(true).Render("ESTIMATED COMPUTE COST"),
 	}
 
+	estimate := catalog.EstimateVM(vm)
+	if estimate.HourlyUSD == 0 {
+		body = append(body, "Pricing unavailable for this machine type.")
+	} else {
+		body = append(body,
+			line("Hourly", fmt.Sprintf("$%.4f", estimate.HourlyUSD)),
+			line("Daily", fmt.Sprintf("$%.2f", estimate.DailyUSD)),
+			line("Monthly", fmt.Sprintf("$%.2f", estimate.MonthlyUSD)),
+			line("Pricing", "Baseline estimate — not billing data"),
+		)
+	}
+
+	body = append(body, "", lipgloss.NewStyle().Bold(true).Render("CPU UTILIZATION (24h)"))
 	if vm.Status != "RUNNING" {
 		body = append(body, "Not running — usage metrics are not evaluated.")
 	} else if !monitoringAvailable {
