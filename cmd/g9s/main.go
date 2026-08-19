@@ -25,6 +25,13 @@ func main() {
 	}
 	defer computeSvc.Close()
 
+	diskSvc, err := gcp.NewDiskService(ctx, client)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "g9s: %v\n", err)
+		os.Exit(1)
+	}
+	defer diskSvc.Close()
+
 	monitoringSvc, err := gcp.NewMonitoringService(ctx, client)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "g9s: %v\n", err)
@@ -33,7 +40,7 @@ func main() {
 	defer monitoringSvc.Close()
 
 	p := tea.NewProgram(
-		ui.New(client.ProjectID, computeSvc, monitoringSvc),
+		ui.New(client.ProjectID, computeSvc, diskSvc, monitoringSvc),
 		tea.WithAltScreen(),
 	)
 	if _, err := p.Run(); err != nil {
