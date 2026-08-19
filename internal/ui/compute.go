@@ -1,11 +1,13 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/rebash-rebash/g9s/internal/gcp"
 	"github.com/rebash-rebash/g9s/internal/model"
 )
 
@@ -18,19 +20,20 @@ func (i vmItem) Description() string {
 func (i vmItem) FilterValue() string { return i.vm.Name }
 
 type computeModel struct {
-	list        list.Model
-	loading     bool
-	err         error
-	detail      *model.VM
-	utilization model.Utilization
-	utilLoading bool
-	utilErr     error
+	list         list.Model
+	loading      bool
+	err          error
+	detail       *model.VM
+	monitoring   *gcp.MonitoringService
+	utilization  model.Utilization
+	utilLoading  bool
+	utilErr      error
 }
 
-func newComputeModel(width, height int) computeModel {
+func newComputeModel(width, height int, monitoring *gcp.MonitoringService) computeModel {
 	l := list.New([]list.Item{}, list.NewDefaultDelegate(), width, height)
 	l.Title = "Compute Engine — Virtual Machines"
-	return computeModel{list: l, loading: true}
+	return computeModel{list: l, loading: true, monitoring: monitoring}
 }
 
 func (m computeModel) Update(msg tea.Msg) (computeModel, tea.Cmd) {
@@ -65,9 +68,6 @@ func (m computeModel) Update(msg tea.Msg) (computeModel, tea.Cmd) {
 			items = append(items, vmItem{vm: vm})
 		}
 		m.list.SetItems(items)
-	case TeaCPUUtilizationMsg:
-		// Compatibility alias for future message routing.
-		m.utilLoading = false
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "esc":
@@ -77,14 +77,24 @@ func (m computeModel) Update(msg tea.Msg) (computeModel, tea.Cmd) {
 				vm := item.vm
 				m.detail = &vm
 				m.utilization = model.Utilization{}
-				m.utilLoading = vm.Status == "RUNNING"
 				m.utilErr = nil
+				m.utilLoading = vm.Status == "RUNNING" && m.monitoring != nil
+				if m.utilLoading {
+					return m, m.loadCPU(vm.InstanceID)
+				}
 			}
 		}
 	}
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
 	return m, cmd
+}
+
+func (m computeModel) loadCPU(instanceID string) tea.Cmd {
+	return func() tea.Msg {
+		utilization, err := m.monitoring.GetCPUUtilization(context.Background(), instanceID)
+		return cpuUtilizationMsg{utilization: utilization, err: err}
+	}
 }
 
 func (m computeModel) View() string {
@@ -129,6 +139,8 @@ func renderVMDetails(vm model.VM, utilLoading bool, utilization model.Utilizatio
 
 	if vm.Status != "RUNNING" {
 		body = append(body, "Not running — CPU metrics are not evaluated.")
+	} else if mmonitoringUnavailable(utilLoading, utilErr) {
+		body = append(body, "Cloud Monitoring is unavailable.")
 	} else if utilLoading {
 		body = append(body, "Loading Cloud Monitoring metrics...")
 	} else if utilErr != nil {
@@ -147,6 +159,10 @@ func renderVMDetails(vm model.VM, utilLoading bool, utilization model.Utilizatio
 
 	body = append(body, "", lipgloss.NewStyle().Faint(true).Render("esc back"))
 	return lipgloss.JoinVertical(lipgloss.Left, body...)
+}
+
+func mmonitoringUnavailable(loading bool, err error) bool {
+	return !loading && err == nil && false
 }
 
 func formatRatio(value *float64) string {
@@ -181,8 +197,5 @@ type cpuUtilizationMsg struct {
 	utilization model.Utilization
 	err         error
 }
-
-// TeaCPUUtilizationMsg is retained as a named message type for compatibility with future UI routing.
-type TeaCPUUtilizationMsg struct{}
 
 type backMsg struct{}
