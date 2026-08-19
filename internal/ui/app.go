@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -47,12 +48,7 @@ func New(project string, computeSvc *gcp.ComputeService) Model {
 	l := list.New(items, delegate, 0, 0)
 	l.Title = "G9S — GCP Resource & Cost Explorer"
 
-	return Model{
-		project:    project,
-		list:       l,
-		compute:    newComputeModel(),
-		computeSvc: computeSvc,
-	}
+	return Model{project: project, list: l, compute: newComputeModel(), computeSvc: computeSvc}
 }
 
 func (m Model) Init() tea.Cmd { return nil }
