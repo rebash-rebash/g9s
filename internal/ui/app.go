@@ -54,7 +54,7 @@ func New(project string, computeSvc *gcp.ComputeService, diskSvc *gcp.DiskServic
 	l.Styles.Title = sectionStyle
 	l.Styles.HelpStyle = mutedStyle
 	l.Styles.PaginationStyle = mutedStyle
-	l.SetShowStatusBar(true)
+	l.SetShowStatusBar(false)
 	return Model{project: project, list: l, compute: newComputeModel(0, 0, monitoringSvc), disks: newDisksModel(0, 0), cost: newCostModel(0, 0), computeSvc: computeSvc, diskSvc: diskSvc, monitoringSvc: monitoringSvc}
 }
 
@@ -90,7 +90,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.list.SetSize(msg.Width-4, msg.Height-10)
+		m.list.SetSize(msg.Width-8, msg.Height-18)
 	}
 	var cmd tea.Cmd; m.list, cmd = m.list.Update(msg); return m, cmd
 }
@@ -127,20 +127,10 @@ func (m Model) View() string {
 	case costScreen:
 		content = m.cost.View()
 	default:
-		header := renderTopBar(m.project, "GCP Resource Explorer")
-		contextLine := mutedStyle.Render("Connected  •  GCP  •  project: ") + accentStyle.Render(m.project)
-		footer := renderFooter("↑↓ navigate  •  / search  •  enter open  •  q quit")
-		content = lipgloss.JoinVertical(lipgloss.Left,
-			header,
-			contextLine,
-			"",
-			m.list.View(),
-			"",
-			footer,
-		)
+		content = renderDashboard(m.project, m.list, m.width, m.height)
 	}
 
-	return renderFrame(m.width, m.height, content)
+	return content
 }
 
 type costModel struct {
