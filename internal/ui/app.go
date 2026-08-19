@@ -26,6 +26,7 @@ type screen int
 const (
 	dashboardScreen screen = iota
 	computeScreen
+	disksScreen
 	costScreen
 )
 
@@ -33,8 +34,10 @@ type Model struct {
 	project       string
 	list          list.Model
 	compute       computeModel
+	disks          disksModel
 	cost           costModel
 	computeSvc    *gcp.ComputeService
+	diskSvc       *gcp.DiskService
 	monitoringSvc *gcp.MonitoringService
 	screen        screen
 	quitting      bool
@@ -42,7 +45,7 @@ type Model struct {
 	height        int
 }
 
-func New(project string, computeSvc *gcp.ComputeService, monitoringSvc *gcp.MonitoringService) Model {
+func New(project string, computeSvc *gcp.ComputeService, diskSvc *gcp.DiskService, monitoringSvc *gcp.MonitoringService) Model {
 	items := []list.Item{
 		resourceItem{"Compute Engine", "Explore virtual machines"},
 		resourceItem{"GKE", "Explore Kubernetes clusters"},
@@ -50,17 +53,16 @@ func New(project string, computeSvc *gcp.ComputeService, monitoringSvc *gcp.Moni
 		resourceItem{"Cloud Storage", "Explore buckets"},
 		resourceItem{"Cost", "Cost and utilization intelligence"},
 	}
-
-	delegate := list.NewDefaultDelegate()
-	l := list.New(items, delegate, 0, 0)
+	l := list.New(items, list.NewDefaultDelegate(), 0, 0)
 	l.Title = "G9S — GCP Resource & Cost Explorer"
-
 	return Model{
-		project:       project,
-		list:          l,
-		compute:       newComputeModel(0, 0, monitoringSvc),
-		cost:          newCostModel(0, 0),
-		computeSvc:    computeSvc,
+		project: project,
+		list: l,
+		compute: newComputeModel(0, 0, monitoringSvc),
+		disks: newDisksModel(0, 0),
+		cost: newCostModel(0, 0),
+		computeSvc: computeSvc,
+		diskSvc: diskSvc,
 		monitoringSvc: monitoringSvc,
 	}
 }
@@ -68,20 +70,19 @@ func New(project string, computeSvc *gcp.ComputeService, monitoringSvc *gcp.Moni
 func (m Model) Init() tea.Cmd { return nil }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if m.screen == computeScreen {
-		if _, ok := msg.(backMsg); ok {
-			m.screen = dashboardScreen
-			return m, nil
-		}
+	switch m.screen {
+	case computeScreen:
+		if _, ok := msg.(backMsg); ok { m.screen = dashboardScreen; return m, nil }
 		var cmd tea.Cmd
 		m.compute, cmd = m.compute.Update(msg)
 		return m, cmd
-	}
-	if m.screen == costScreen {
-		if _, ok := msg.(backMsg); ok {
-			m.screen = dashboardScreen
-			return m, nil
-		}
+	case disksScreen:
+		if _, ok := msg.(backMsg); ok { m.screen = dashboardScreen; return m, nil }
+		var cmd tea.Cmd
+		m.disks, cmd = m.disks.Update(msg)
+		return m, cmd
+	case costScreen:
+		if _, ok := msg.(backMsg); ok { m.screen = dashboardScreen; return m, nil }
 		var cmd tea.Cmd
 		m.cost, cmd = m.cost.Update(msg)
 		return m, cmd
@@ -100,6 +101,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.screen = computeScreen
 					m.compute = newComputeModel(m.width, m.height-4, m.monitoringSvc)
 					return m, m.loadVMs()
+				case "Disks":
+					m.screen = disksScreen
+					m.disks = newDisksModel(m.width, m.height-4)
+					return m, loadDisks(m.diskSvc)
 				case "Cost":
 					m.screen = costScreen
 					m.cost = newCostModel(m.width, m.height-4)
@@ -108,11 +113,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
+		m.width, m.height = msg.Width, msg.Height
 		m.list.SetSize(msg.Width, msg.Height-4)
 	}
-
 	var cmd tea.Cmd
 	m.list, cmd = m.list.Update(msg)
 	return m, cmd
@@ -133,16 +136,12 @@ func (m Model) loadCost() tea.Cmd {
 }
 
 func (m Model) View() string {
-	if m.quitting {
-		return ""
+	if m.quitting { return "" }
+	switch m.screen {
+	case computeScreen: return m.compute.View()
+	case disksScreen: return m.disks.View()
+	case costScreen: return m.cost.View()
 	}
-	if m.screen == computeScreen {
-		return m.compute.View()
-	}
-	if m.screen == costScreen {
-		return m.cost.View()
-	}
-
 	header := lipgloss.NewStyle().Bold(true).Render(fmt.Sprintf("Project: %s", m.project))
 	footer := lipgloss.NewStyle().Faint(true).Render("↑↓ navigate  / search  enter open  q quit")
 	return header + "\n\n" + m.list.View() + "\n" + footer + "\n"
@@ -170,57 +169,35 @@ func (m costModel) Update(msg tea.Msg) (costModel, tea.Cmd) {
 		m.vms = msg.vms
 		m.err = msg.err
 	case tea.KeyMsg:
-		if msg.String() == "esc" {
-			return m, func() tea.Msg { return backMsg{} }
-		}
+		if msg.String() == "esc" { return m, func() tea.Msg { return backMsg{} } }
 	}
 	return m, nil
 }
 
 func (m costModel) View() string {
-	if m.loading {
-		return "Loading cost estimates..."
-	}
-	if m.err != nil {
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("Error: " + m.err.Error())
-	}
-
+	if m.loading { return "Loading cost estimates..." }
+	if m.err != nil { return lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("Error: " + m.err.Error()) }
 	var running, stopped, unsupported int
 	var monthly float64
 	for _, vm := range m.vms {
 		e := m.catalog.EstimateVM(vm)
-		if !e.Available {
-			unsupported++
-			continue
-		}
-		if vm.Status == "RUNNING" {
-			running++
-			monthly += e.MonthlyUSD
-		} else {
-			stopped++
-		}
+		if !e.Available { unsupported++; continue }
+		if vm.Status == "RUNNING" { running++; monthly += e.MonthlyUSD } else { stopped++ }
 	}
-
 	style := lipgloss.NewStyle().Bold(true)
 	lines := []string{
-		style.Render("G9S — Cost Intelligence"),
-		"",
+		style.Render("G9S — Cost Intelligence"), "",
 		fmt.Sprintf("Compute VMs        %d", len(m.vms)),
 		fmt.Sprintf("Running VMs        %d", running),
 		fmt.Sprintf("Stopped VMs        %d", stopped),
-		fmt.Sprintf("Unsupported types  %d", unsupported),
-		"",
+		fmt.Sprintf("Unsupported types  %d", unsupported), "",
 		style.Render("ESTIMATED COMPUTE COST"),
 		fmt.Sprintf("Monthly            $%.2f", monthly),
-		fmt.Sprintf("Daily              $%.2f", monthly/30.0),
-		"",
+		fmt.Sprintf("Daily              $%.2f", monthly/30.0), "",
 		lipgloss.NewStyle().Faint(true).Render("Baseline on-demand estimate • excludes disks, IPs, network, discounts, and actual billing"),
 		lipgloss.NewStyle().Faint(true).Render("esc back"),
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
-type costListMsg struct {
-	vms []model.VM
-	err error
-}
+type costListMsg struct { vms []model.VM; err error }
