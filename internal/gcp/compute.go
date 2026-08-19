@@ -55,6 +55,7 @@ func (s *ComputeService) ListVMs(ctx context.Context) ([]model.VM, error) {
 func normalizeVM(instance *computepb.Instance) model.VM {
 	vm := model.VM{
 		Name:         instance.GetName(),
+		InstanceID:   fmt.Sprintf("%d", instance.GetId()),
 		Status:       instance.GetStatus(),
 		CreationTime: instance.GetCreationTimestamp(),
 		DiskCount:    len(instance.GetDisks()),
