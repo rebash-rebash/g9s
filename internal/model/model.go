@@ -32,6 +32,7 @@ type Disk struct {
 	Name     string
 	Zone     string
 	SizeGB   int64
+	Type     string
 	Attached bool
 }
 
