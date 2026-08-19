@@ -32,29 +32,18 @@ func NewUSCentral1Catalog() Catalog {
 	return Catalog{
 		VCPUHourUSD:     0.031611,
 		MemoryGBHourUSD: 0.004237,
-		Source:          "baseline N1 on-demand estimate; not billing data",
+		Source:          "Google Cloud us-central1 on-demand baseline; not billing data",
 	}
 }
 
 func (c Catalog) EstimateVM(vm model.VM) VMEstimate {
-	vCPU, memoryGB, supported := parseMachineType(vm.MachineType)
+	vCPU, memoryGB, hourly, supported := machineTypePrice(vm.MachineType)
 	if !supported {
 		return VMEstimate{MachineType: vm.MachineType, VCPU: vCPU, MemoryGB: memoryGB, Source: c.Source}
 	}
-
-	// Stopped/terminated VMs do not consume vCPU/memory. Persistent disks and
-	// retained IPs are separate cost components and will be added later.
 	if vm.Status != "RUNNING" {
-		return VMEstimate{
-			MachineType: vm.MachineType,
-			VCPU:        vCPU,
-			MemoryGB:    memoryGB,
-			Source:      c.Source,
-			Available:   true,
-		}
+		return VMEstimate{MachineType: vm.MachineType, VCPU: vCPU, MemoryGB: memoryGB, Source: c.Source, Available: true}
 	}
-
-	hourly := float64(vCPU)*c.VCPUHourUSD + memoryGB*c.MemoryGBHourUSD
 	return VMEstimate{
 		MachineType: vm.MachineType,
 		VCPU:        vCPU,
@@ -67,32 +56,56 @@ func (c Catalog) EstimateVM(vm model.VM) VMEstimate {
 	}
 }
 
-var n1MachinePattern = regexp.MustCompile(`^n1-(?:standard|highmem|highcpu)-([0-9]+)$`)
+var machinePattern = regexp.MustCompile(`^(n1|n2|n2d)-(standard|highmem|highcpu)-([0-9]+)$`)
 
-func parseMachineType(machineType string) (int, float64, bool) {
+// machineTypePrice covers the machine families currently present in the
+// project. Standard-family prices scale linearly from the us-central1
+// on-demand baseline for the family. It is still an estimate, not billing.
+func machineTypePrice(machineType string) (int, float64, float64, bool) {
 	machineType = strings.TrimSpace(machineType)
-	match := n1MachinePattern.FindStringSubmatch(machineType)
-	if len(match) != 2 {
-		return 0, 0, false
+	match := machinePattern.FindStringSubmatch(machineType)
+	if len(match) != 4 {
+		return 0, 0, 0, false
 	}
-	vCPU, err := strconv.Atoi(match[1])
-	if err != nil {
-		return 0, 0, false
+	family, shape, size := match[1], match[2], match[3]
+	vCPU, err := strconv.Atoi(size)
+	if err != nil || vCPU <= 0 {
+		return 0, 0, 0, false
+	}
+	memoryGB, ok := machineMemory(family, shape, vCPU)
+	if !ok {
+		return 0, 0, 0, false
 	}
 
-	var memoryByCPU map[int]float64
+	var baseVCPU int
+	var baseHourly float64
 	switch {
-	case strings.HasPrefix(machineType, "n1-standard-"):
-		memoryByCPU = map[int]float64{1: 3.75, 2: 7.5, 4: 15, 8: 30, 16: 60, 32: 120, 64: 240, 96: 360}
-	case strings.HasPrefix(machineType, "n1-highmem-"):
-		memoryByCPU = map[int]float64{2: 13, 4: 26, 8: 52, 16: 104, 32: 208, 64: 416, 96: 624}
-	case strings.HasPrefix(machineType, "n1-highcpu-"):
-		memoryByCPU = map[int]float64{2: 1.8, 4: 3.6, 8: 7.2, 16: 14.4, 32: 28.8}
+	case family == "n1" && shape == "standard":
+		baseVCPU, baseHourly = 2, 0.0950
+	case family == "n2" && shape == "standard":
+		baseVCPU, baseHourly = 4, 0.1942
+	case family == "n2d" && shape == "standard":
+		baseVCPU, baseHourly = 4, 0.1680
 	default:
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
-	memoryGB, ok := memoryByCPU[vCPU]
-	return vCPU, memoryGB, ok
+
+	hourly := baseHourly * float64(vCPU) / float64(baseVCPU)
+	return vCPU, memoryGB, hourly, true
+}
+
+func machineMemory(family, shape string, vCPU int) (float64, bool) {
+	memoryByCPU := map[string]map[int]float64{
+		"n1-standard": {1: 3.75, 2: 7.5, 4: 15, 8: 30, 16: 60, 32: 120, 64: 240, 96: 360},
+		"n2-standard": {2: 8, 4: 16, 8: 32, 16: 64, 32: 128, 48: 192, 64: 256, 80: 320, 96: 384, 128: 512},
+		"n2d-standard": {2: 8, 4: 16, 8: 32, 16: 64, 32: 128, 48: 192, 64: 256, 80: 320, 96: 384, 128: 512, 224: 896},
+	}
+	values, ok := memoryByCPU[family+"-"+shape]
+	if !ok {
+		return 0, false
+	}
+	memory, ok := values[vCPU]
+	return memory, ok
 }
 
 func FormatEstimate(e VMEstimate) string {
