@@ -50,10 +50,12 @@ func (s *DiskService) ListDisks(ctx context.Context) ([]model.Disk, error) {
 }
 
 func normalizeDisk(disk *computepb.Disk) model.Disk {
+	users := append([]string(nil), disk.GetUsers()...)
 	d := model.Disk{
 		Name:     disk.GetName(),
 		SizeGB:   disk.GetSizeGb(),
-		Attached: len(disk.GetUsers()) > 0,
+		Attached: len(users) > 0,
+		Users:    users,
 		Type:     diskType(disk.GetType()),
 	}
 	if disk.GetZone() != "" {
