@@ -18,7 +18,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	p := tea.NewProgram(ui.New(client.ProjectID), tea.WithAltScreen())
+	computeSvc, err := gcp.NewComputeService(ctx, client)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "g9s: %v\n", err)
+		os.Exit(1)
+	}
+	defer computeSvc.Close()
+
+	p := tea.NewProgram(ui.New(client.ProjectID, computeSvc), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "g9s: %v\n", err)
 		os.Exit(1)
