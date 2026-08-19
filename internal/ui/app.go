@@ -7,7 +7,9 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/rebash-rebash/g9s/internal/cost"
 	"github.com/rebash-rebash/g9s/internal/gcp"
+	"github.com/rebash-rebash/g9s/internal/model"
 )
 
 type resourceItem struct {
@@ -24,18 +26,20 @@ type screen int
 const (
 	dashboardScreen screen = iota
 	computeScreen
+	costScreen
 )
 
 type Model struct {
-	project      string
-	list         list.Model
-	compute      computeModel
-	computeSvc   *gcp.ComputeService
+	project       string
+	list          list.Model
+	compute       computeModel
+	cost           costModel
+	computeSvc    *gcp.ComputeService
 	monitoringSvc *gcp.MonitoringService
-	screen       screen
-	quitting     bool
-	width        int
-	height       int
+	screen        screen
+	quitting      bool
+	width         int
+	height        int
 }
 
 func New(project string, computeSvc *gcp.ComputeService, monitoringSvc *gcp.MonitoringService) Model {
@@ -55,6 +59,7 @@ func New(project string, computeSvc *gcp.ComputeService, monitoringSvc *gcp.Moni
 		project:       project,
 		list:          l,
 		compute:       newComputeModel(0, 0, monitoringSvc),
+		cost:          newCostModel(0, 0),
 		computeSvc:    computeSvc,
 		monitoringSvc: monitoringSvc,
 	}
@@ -72,6 +77,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.compute, cmd = m.compute.Update(msg)
 		return m, cmd
 	}
+	if m.screen == costScreen {
+		if _, ok := msg.(backMsg); ok {
+			m.screen = dashboardScreen
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.cost, cmd = m.cost.Update(msg)
+		return m, cmd
+	}
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -80,10 +94,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		if msg.String() == "enter" {
-			if item, ok := m.list.SelectedItem().(resourceItem); ok && item.name == "Compute Engine" {
-				m.screen = computeScreen
-				m.compute = newComputeModel(m.width, m.height-4, m.monitoringSvc)
-				return m, m.loadVMs()
+			if item, ok := m.list.SelectedItem().(resourceItem); ok {
+				switch item.name {
+				case "Compute Engine":
+					m.screen = computeScreen
+					m.compute = newComputeModel(m.width, m.height-4, m.monitoringSvc)
+					return m, m.loadVMs()
+				case "Cost":
+					m.screen = costScreen
+					m.cost = newCostModel(m.width, m.height-4)
+					return m, m.loadCost()
+				}
 			}
 		}
 	case tea.WindowSizeMsg:
@@ -104,6 +125,13 @@ func (m Model) loadVMs() tea.Cmd {
 	}
 }
 
+func (m Model) loadCost() tea.Cmd {
+	return func() tea.Msg {
+		vms, err := m.computeSvc.ListVMs(context.Background())
+		return costListMsg{vms: vms, err: err}
+	}
+}
+
 func (m Model) View() string {
 	if m.quitting {
 		return ""
@@ -111,8 +139,88 @@ func (m Model) View() string {
 	if m.screen == computeScreen {
 		return m.compute.View()
 	}
+	if m.screen == costScreen {
+		return m.cost.View()
+	}
 
 	header := lipgloss.NewStyle().Bold(true).Render(fmt.Sprintf("Project: %s", m.project))
 	footer := lipgloss.NewStyle().Faint(true).Render("↑↓ navigate  / search  enter open  q quit")
 	return header + "\n\n" + m.list.View() + "\n" + footer + "\n"
+}
+
+type costModel struct {
+	loading bool
+	err     error
+	vms     []model.VM
+	catalog cost.Catalog
+	width   int
+	height  int
+}
+
+func newCostModel(width, height int) costModel {
+	return costModel{loading: true, catalog: cost.NewUSCentral1Catalog(), width: width, height: height}
+}
+
+func (m costModel) Update(msg tea.Msg) (costModel, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
+	case costListMsg:
+		m.loading = false
+		m.vms = msg.vms
+		m.err = msg.err
+	case tea.KeyMsg:
+		if msg.String() == "esc" {
+			return m, func() tea.Msg { return backMsg{} }
+		}
+	}
+	return m, nil
+}
+
+func (m costModel) View() string {
+	if m.loading {
+		return "Loading cost estimates..."
+	}
+	if m.err != nil {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("Error: " + m.err.Error())
+	}
+
+	var running, stopped, unsupported int
+	var monthly float64
+	for _, vm := range m.vms {
+		e := m.catalog.EstimateVM(vm)
+		if !e.Available {
+			unsupported++
+			continue
+		}
+		if vm.Status == "RUNNING" {
+			running++
+			monthly += e.MonthlyUSD
+		} else {
+			stopped++
+		}
+	}
+
+	style := lipgloss.NewStyle().Bold(true)
+	lines := []string{
+		style.Render("G9S — Cost Intelligence"),
+		"",
+		fmt.Sprintf("Compute VMs        %d", len(m.vms)),
+		fmt.Sprintf("Running VMs        %d", running),
+		fmt.Sprintf("Stopped VMs        %d", stopped),
+		fmt.Sprintf("Unsupported types  %d", unsupported),
+		"",
+		style.Render("ESTIMATED COMPUTE COST"),
+		fmt.Sprintf("Monthly            $%.2f", monthly),
+		fmt.Sprintf("Daily              $%.2f", monthly/30.0),
+		"",
+		lipgloss.NewStyle().Faint(true).Render("Baseline on-demand estimate • excludes disks, IPs, network, discounts, and actual billing"),
+		lipgloss.NewStyle().Faint(true).Render("esc back"),
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+type costListMsg struct {
+	vms []model.VM
+	err error
 }
