@@ -148,13 +148,29 @@ func (m costModel) Update(msg tea.Msg) (costModel, tea.Cmd) {
 func (m costModel) View() string {
 	if m.loading { return "Loading cost intelligence..." }
 	if m.err != nil { return lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("Error: " + m.err.Error()) }
+
+	// Count VM lifecycle state independently from pricing support. An unsupported
+	// machine type is still a RUNNING or stopped VM; it must never be counted as
+	// stopped merely because the estimator cannot price it yet.
 	var running, stopped, unsupported int
 	var monthly float64
 	for _, vm := range m.vms {
+		if vm.Status == "RUNNING" {
+			running++
+		} else {
+			stopped++
+		}
+
 		e := m.catalog.EstimateVM(vm)
-		if !e.Available { unsupported++; continue }
-		if vm.Status == "RUNNING" { running++; monthly += e.MonthlyUSD } else { stopped++ }
+		if !e.Available {
+			unsupported++
+			continue
+		}
+		if vm.Status == "RUNNING" {
+			monthly += e.MonthlyUSD
+		}
 	}
+
 	potential := analyzer.PotentialMonthlySavings(m.findings)
 	style := lipgloss.NewStyle().Bold(true)
 	lines := []string{
@@ -162,6 +178,7 @@ func (m costModel) View() string {
 		fmt.Sprintf("Compute VMs        %d", len(m.vms)),
 		fmt.Sprintf("Running VMs        %d", running),
 		fmt.Sprintf("Stopped VMs        %d", stopped),
+		fmt.Sprintf("Unsupported types  %d", unsupported),
 		fmt.Sprintf("Persistent Disks   %d", len(m.disks)),
 		fmt.Sprintf("Findings            %d", len(m.findings)), "",
 		style.Render("ESTIMATED COMPUTE COST"),
