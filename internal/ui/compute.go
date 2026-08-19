@@ -20,14 +20,14 @@ func (i vmItem) Description() string {
 func (i vmItem) FilterValue() string { return i.vm.Name }
 
 type computeModel struct {
-	list         list.Model
-	loading      bool
-	err          error
-	detail       *model.VM
-	monitoring   *gcp.MonitoringService
-	utilization  model.Utilization
-	utilLoading  bool
-	utilErr      error
+	list        list.Model
+	loading     bool
+	err         error
+	detail      *model.VM
+	monitoring  *gcp.MonitoringService
+	utilization model.Utilization
+	utilLoading bool
+	utilErr     error
 }
 
 func newComputeModel(width, height int, monitoring *gcp.MonitoringService) computeModel {
@@ -99,7 +99,7 @@ func (m computeModel) loadCPU(instanceID string) tea.Cmd {
 
 func (m computeModel) View() string {
 	if m.detail != nil {
-		return renderVMDetails(*m.detail, m.utilLoading, m.utilization, m.utilErr)
+		return renderVMDetails(*m.detail, m.monitoring != nil, m.utilLoading, m.utilization, m.utilErr)
 	}
 	if m.loading {
 		return "Loading Compute Engine instances..."
@@ -110,7 +110,7 @@ func (m computeModel) View() string {
 	return m.list.View() + "\n" + lipgloss.NewStyle().Faint(true).Render("↑↓ navigate  / search  enter details  esc back") + "\n"
 }
 
-func renderVMDetails(vm model.VM, utilLoading bool, utilization model.Utilization, utilErr error) string {
+func renderVMDetails(vm model.VM, monitoringAvailable, utilLoading bool, utilization model.Utilization, utilErr error) string {
 	title := lipgloss.NewStyle().Bold(true).Render("Compute Engine — VM Details")
 	label := lipgloss.NewStyle().Bold(true)
 	line := func(name, value string) string {
@@ -139,7 +139,7 @@ func renderVMDetails(vm model.VM, utilLoading bool, utilization model.Utilizatio
 
 	if vm.Status != "RUNNING" {
 		body = append(body, "Not running — CPU metrics are not evaluated.")
-	} else if mmonitoringUnavailable(utilLoading, utilErr) {
+	} else if !monitoringAvailable {
 		body = append(body, "Cloud Monitoring is unavailable.")
 	} else if utilLoading {
 		body = append(body, "Loading Cloud Monitoring metrics...")
@@ -159,10 +159,6 @@ func renderVMDetails(vm model.VM, utilLoading bool, utilization model.Utilizatio
 
 	body = append(body, "", lipgloss.NewStyle().Faint(true).Render("esc back"))
 	return lipgloss.JoinVertical(lipgloss.Left, body...)
-}
-
-func mmonitoringUnavailable(loading bool, err error) bool {
-	return !loading && err == nil && false
 }
 
 func formatRatio(value *float64) string {
